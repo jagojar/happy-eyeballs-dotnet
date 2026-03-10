@@ -272,6 +272,50 @@ public class HappyEyeballsConnectionIntegrationTests
     }
 
     [Fact]
+    public async Task ConnectAsync_WithCustomTimeout_ReturnsTimeoutFailure()
+    {
+        // Arrange
+        var settings = new HappyEyeballsConnectionSettings
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(100)
+        };
+        var connection = new HappyEyeballsConnection(settings);
+
+        // Act
+        var result = await connection.ConnectAsync("192.0.2.1", 80);
+
+        // Assert
+        result.IsSuccessful.Should().BeFalse();
+        result.Exception.Should().BeOfType<TimeoutException>();
+        result.AttemptedAddresses.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task ConnectAsync_ToLocalhost_AttemptedAddressesContainBothFamilies()
+    {
+        // Arrange
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        var connection = new HappyEyeballsConnection();
+
+        // Act
+        var result = await connection.ConnectAsync("localhost", port);
+
+        // Assert
+        result.IsSuccessful.Should().BeTrue();
+        result.AttemptedAddresses.Should().Contain(address => address.AddressFamily == AddressFamily.InterNetwork);
+        result.AttemptedAddresses.Should().Contain(address => address.AddressFamily == AddressFamily.InterNetworkV6);
+        result.ConnectedAddress.Should().NotBeNull();
+        result.AttemptedAddresses.Should().Contain(result.ConnectedAddress!);
+
+        // Cleanup
+        result.Socket?.Dispose();
+        listener.Stop();
+    }
+
+    [Fact]
     public async Task ConnectAsync_MeasuresElapsedTime()
     {
         // Arrange

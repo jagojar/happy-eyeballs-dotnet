@@ -3,23 +3,57 @@
 ## Directory Layout
 
 ```
-happy-eyeballs-vs/
+happy-eyeballs-dotnet/
 ├── src/
-│   └── HappyEyeballs/              # Library project
+│   └── HappyEyeballs/              # .NET 10 library project
 │       ├── HappyEyeballsConnection.cs
 │       ├── HappyEyeballsConnectionSettings.cs
 │       ├── ConnectionAttemptResult.cs
 │       ├── AddressSorter.cs
 │       └── HappyEyeballs.csproj
 ├── samples/
-│   └── HappyEyeballs.Sample/       # Console sample application
+│   └── HappyEyeballs.Sample/       # .NET 10 console sample application
 │       ├── Program.cs
 │       └── HappyEyeballs.Sample.csproj
+├── tests/
+│   └── HappyEyeballs.Tests/        # .NET 10 test project
+│       ├── AddressSorterTests.cs
+│       ├── ConnectionAttemptResultTests.cs
+│       ├── HappyEyeballsConnectionIntegrationTests.cs
+│       ├── HappyEyeballsConnectionSettingsTests.cs
+│       ├── Rfc8305ComplianceTests.cs
+│       └── HappyEyeballs.Tests.csproj
+├── net11/
+│   ├── src/
+│   │   └── HappyEyeballs/          # .NET 11 library project
+│   │       ├── HappyEyeballsConnection.cs
+│   │       ├── HappyEyeballsConnectionSettings.cs
+│   │       ├── ConnectionAttemptResult.cs
+│   │       ├── AddressSorter.cs
+│   │       └── HappyEyeballs.csproj
+│   ├── samples/
+│   │   └── HappyEyeballs.Sample/   # .NET 11 console sample application
+│   │       ├── Program.cs
+│   │       └── HappyEyeballs.Sample.csproj
+│   └── tests/
+│       └── HappyEyeballs.Tests/    # .NET 11 test project
+│           ├── AddressSorterTests.cs
+│           ├── ConnectionAttemptResultTests.cs
+│           ├── HappyEyeballsConnectionIntegrationTests.cs
+│           ├── HappyEyeballsConnectionSettingsTests.cs
+│           ├── Rfc8305ComplianceTests.cs
+│           └── HappyEyeballs.Tests.csproj
 ├── README.md
 ├── ARCHITECTURE.md                  # This file
 ├── .gitignore
 └── HappyEyeballs.slnx               # Solution file
 ```
+
+## Implementation Strategy
+
+The repository intentionally keeps the .NET 10 and .NET 11 implementations as parallel copies. This preserves the current .NET 10 behavior while allowing runtime-specific changes to be evaluated inside `net11/` without changing the root projects.
+
+For the .NET 11 copy, the connection race is no longer orchestrated entirely in user code. `net11/src/HappyEyeballs/HappyEyeballsConnection.cs` now delegates hostname connection racing to the socket layer through the .NET 11 preview `Socket.ConnectAsync(..., ConnectAlgorithm.Parallel)` API, while the root project continues to use the custom RFC 8305 scheduling logic.
 
 ## Component Architecture
 

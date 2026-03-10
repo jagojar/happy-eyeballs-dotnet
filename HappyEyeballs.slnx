@@ -1,4 +1,13 @@
 <Solution>
+  <Folder Name="/net11/samples/">
+    <Project Path="net11/samples/HappyEyeballs.Sample/HappyEyeballs.Sample.csproj" />
+  </Folder>
+  <Folder Name="/net11/src/">
+    <Project Path="net11/src/HappyEyeballs/HappyEyeballs.csproj" />
+  </Folder>
+  <Folder Name="/net11/tests/">
+    <Project Path="net11/tests/HappyEyeballs.Tests/HappyEyeballs.Tests.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/HappyEyeballs.Sample/HappyEyeballs.Sample.csproj" />
   </Folder>

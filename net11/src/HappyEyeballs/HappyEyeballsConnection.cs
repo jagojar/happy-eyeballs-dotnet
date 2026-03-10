@@ -62,8 +62,8 @@ public sealed class HappyEyeballsConnection
             
             _logger?.Invoke($"Sorted addresses: {string.Join(", ", sortedAddresses.Select(a => a.ToString()))}");
 
-            // Step 3: Attempt connections with staggered timing
-            var result = await AttemptConnectionsAsync(sortedAddresses, port, cancellationToken);
+            // Step 3: Delegate the connection race to the socket layer.
+            var result = await AttemptConnectionsAsync(host, sortedAddresses, port, cancellationToken);
             
             stopwatch.Stop();
             
@@ -125,7 +125,7 @@ public sealed class HappyEyeballsConnection
         // Wait a bit more to see if we get both results
         if (secondOrDelay == delayTask)
         {
-            _logger?.Invoke($"Resolution delay elapsed, proceeding with available addresses");
+            _logger?.Invoke("Resolution delay elapsed, proceeding with available addresses");
         }
 
         // Collect all resolved addresses
@@ -159,10 +159,6 @@ public sealed class HappyEyeballsConnection
             _logger?.Invoke($"Resolved {addresses.Length} {addressFamily} addresses");
             return addresses;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
         catch (Exception ex)
         {
             _logger?.Invoke($"Failed to resolve {addressFamily} addresses: {ex.Message}");
@@ -171,167 +167,117 @@ public sealed class HappyEyeballsConnection
     }
 
     /// <summary>
-    /// Attempts connections to multiple addresses with Connection Attempt Delay (RFC 8305 Section 5).
+    /// Attempts a connection using the .NET 11 socket-layer Happy Eyeballs implementation.
     /// </summary>
     private async Task<ConnectionAttemptResult> AttemptConnectionsAsync(
+        string host,
         IReadOnlyList<IPAddress> addresses,
         int port,
         CancellationToken cancellationToken)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var attemptedAddresses = new List<IPAddress>();
-        var tasks = new List<Task<(Socket? Socket, IPAddress Address, Exception? Exception)>>();
-        
-        // RFC 8305 Section 5: Connection Attempt Delay
-        // Start connection attempts with staggered timing
-        for (int i = 0; i < addresses.Count; i++)
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(_settings.ConnectTimeout);
+
+        try
         {
-            var address = addresses[i];
-            attemptedAddresses.Add(address);
-            
-            _logger?.Invoke($"Starting connection attempt {i + 1} to {address}");
-            
-            var attemptTask = AttemptSingleConnectionAsync(address, port, cts.Token);
-            tasks.Add(attemptTask);
+            EndPoint remoteEndPoint = IPAddress.TryParse(host, out var parsedAddress)
+                ? new IPEndPoint(parsedAddress, port)
+                : new DnsEndPoint(host, port);
 
-            // For subsequent attempts, wait for Connection Attempt Delay
-            if (i < addresses.Count - 1)
-            {
-                try
-                {
-                    // Wait for either:
-                    // 1. Connection Attempt Delay to elapse, or
-                    // 2. Any task to complete (success or failure)
-                    var completedTask = await Task.WhenAny(
-                        Task.Delay(_settings.ConnectionAttemptDelay, cts.Token),
-                        Task.WhenAny(tasks)
-                    );
+            _logger?.Invoke($"Delegating connect race to socket layer with {ConnectAlgorithm.Parallel}");
 
-                    // Check if any connection succeeded
-                    var completedAttempts = tasks.Where(t => t.IsCompleted).ToList();
-                    foreach (var attempt in completedAttempts)
-                    {
-                        var (socket, addr, exception) = await attempt;
-                        if (socket != null)
-                        {
-                            _logger?.Invoke($"Connection to {addr} succeeded, cancelling other attempts");
-                            await cts.CancelAsync();
-                            
-                            // Clean up other sockets
-                            await CleanupFailedAttemptsAsync(tasks, socket);
-                            
-                            return ConnectionAttemptResult.Success(socket, addr, attemptedAddresses, TimeSpan.Zero);
-                        }
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
+            var socket = await ConnectWithParallelAlgorithmAsync(remoteEndPoint, timeoutCts.Token);
+            socket.NoDelay = true;
 
-                    break;
-                }
-            }
+            var connectedAddress = ((IPEndPoint)socket.RemoteEndPoint!).Address;
+            return ConnectionAttemptResult.Success(socket, connectedAddress, addresses, TimeSpan.Zero);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Timed out connecting to {host}:{port} after {_settings.ConnectTimeout}.");
+        }
+    }
+
+    private Task<Socket> ConnectWithParallelAlgorithmAsync(EndPoint remoteEndPoint, CancellationToken cancellationToken)
+    {
+        var socketEventArgs = new SocketAsyncEventArgs
+        {
+            RemoteEndPoint = remoteEndPoint
+        };
+
+        var completionSource = new TaskCompletionSource<Socket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationTokenRegistration cancellationRegistration = default;
+
+        void Cleanup()
+        {
+            cancellationRegistration.Dispose();
+            socketEventArgs.Completed -= OnCompleted;
+            socketEventArgs.Dispose();
         }
 
-        // Wait for any connection to succeed or all to fail
-        while (tasks.Count > 0)
+        void CompleteFromCurrentState()
         {
             try
             {
-                var completedTask = await Task.WhenAny(tasks);
-                var (socket, address, exception) = await completedTask;
-                tasks.Remove(completedTask);
+                if (socketEventArgs.SocketError == SocketError.Success && socketEventArgs.ConnectSocket is not null)
+                {
+                    completionSource.TrySetResult(socketEventArgs.ConnectSocket);
+                    return;
+                }
 
-                if (socket != null)
+                if (cancellationToken.IsCancellationRequested && socketEventArgs.SocketError is SocketError.OperationAborted or SocketError.ConnectionAborted or SocketError.Interrupted)
                 {
-                    _logger?.Invoke($"Connection to {address} succeeded");
-                    await cts.CancelAsync();
-                    
-                    // Clean up other sockets
-                    await CleanupFailedAttemptsAsync(tasks, socket);
-                    
-                    return ConnectionAttemptResult.Success(socket, address, attemptedAddresses, TimeSpan.Zero);
+                    completionSource.TrySetCanceled(cancellationToken);
+                    return;
                 }
-                else
-                {
-                    _logger?.Invoke($"Connection to {address} failed: {exception?.Message}");
-                }
+
+                completionSource.TrySetException(new SocketException((int)socketEventArgs.SocketError));
             }
-            catch (OperationCanceledException)
+            finally
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-
-                break;
+                Cleanup();
             }
         }
 
-        // All attempts failed
-        return ConnectionAttemptResult.Failure(
-            new SocketException((int)SocketError.ConnectionRefused),
-            attemptedAddresses,
-            TimeSpan.Zero
-        );
-    }
+        void OnCompleted(object? _, SocketAsyncEventArgs __)
+        {
+            CompleteFromCurrentState();
+        }
 
-    private async Task<(Socket? Socket, IPAddress Address, Exception? Exception)> AttemptSingleConnectionAsync(
-        IPAddress address,
-        int port,
-        CancellationToken cancellationToken)
-    {
-        Socket? socket = null;
+        socketEventArgs.Completed += OnCompleted;
+
+        if (cancellationToken.CanBeCanceled)
+        {
+            cancellationRegistration = cancellationToken.Register(static state =>
+            {
+                var args = (SocketAsyncEventArgs)state!;
+
+                try
+                {
+                    Socket.CancelConnectAsync(args);
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }, socketEventArgs);
+        }
+
         try
         {
-            socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            
-            // Apply socket options
-            socket.NoDelay = true; // Disable Nagle's algorithm for lower latency
-            
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(_settings.ConnectTimeout);
-            
-            await socket.ConnectAsync(address, port, timeoutCts.Token);
-            
-            return (socket, address, null);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            socket?.Dispose();
-            throw;
+            if (!Socket.ConnectAsync(SocketType.Stream, ProtocolType.Tcp, socketEventArgs, ConnectAlgorithm.Parallel))
+            {
+                CompleteFromCurrentState();
+            }
         }
         catch (Exception ex)
         {
-            socket?.Dispose();
-            return (null, address, ex);
+            Cleanup();
+            completionSource.TrySetException(ex);
         }
-    }
 
-    private async Task CleanupFailedAttemptsAsync(
-        List<Task<(Socket? Socket, IPAddress Address, Exception? Exception)>> tasks,
-        Socket successfulSocket)
-    {
-        foreach (var task in tasks)
-        {
-            try
-            {
-                if (task.IsCompleted)
-                {
-                    var (socket, _, _) = await task;
-                    if (socket != null && socket != successfulSocket)
-                    {
-                        socket.Dispose();
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore cleanup errors
-            }
-        }
+        return completionSource.Task;
     }
 }

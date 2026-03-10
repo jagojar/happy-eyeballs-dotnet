@@ -1,6 +1,13 @@
-# Happy Eyeballs v2 for .NET 10
+# Happy Eyeballs v2 for .NET
 
-A complete implementation of **Happy Eyeballs Version 2** ([RFC 8305](https://tools.ietf.org/html/rfc8305)) for .NET 10, providing fast and reliable dual-stack (IPv4/IPv6) TCP connections.
+A complete implementation of **Happy Eyeballs Version 2** ([RFC 8305](https://tools.ietf.org/html/rfc8305)) for .NET, providing fast and reliable dual-stack (IPv4/IPv6) TCP connections.
+
+This repository currently contains two side-by-side implementations:
+
+- `src/`, `samples/`, and `tests/` target .NET 10.
+- `net11/src/`, `net11/samples/`, and `net11/tests/` target .NET 11.
+
+The .NET 11 track keeps the same public API but delegates connection racing to the new socket-layer `Socket.ConnectAsync` Happy Eyeballs support added in the .NET 11 preview.
 
 ## What is Happy Eyeballs v2?
 
@@ -29,6 +36,7 @@ RFC 8305 improves on the original (RFC 6555) by:
 ✅ Built-in logging for debugging  
 ✅ No external dependencies  
 ✅ .NET 10 compatible  
+✅ Parallel .NET 11 implementation  
 
 ## Installation
 
@@ -39,6 +47,19 @@ dotnet add reference path/to/HappyEyeballs.csproj
 ```
 
 Or copy the source files into your project.
+
+## Repository Layout
+
+```text
+happy-eyeballs-dotnet/
+|- src/                              # .NET 10 library
+|- samples/                          # .NET 10 sample
+|- tests/                            # .NET 10 tests
+|- net11/src/                        # .NET 11 library
+|- net11/samples/                    # .NET 11 sample
+|- net11/tests/                      # .NET 11 tests
+`- HappyEyeballs.slnx                # Solution including both tracks
+```
 
 ## Quick Start
 
@@ -172,10 +193,23 @@ Contains the result of connection attempts, including:
 - Connection timing
 - Exception details (if failed)
 
+### .NET 11 implementation note
+
+The root .NET 10 implementation keeps the custom user-space RFC 8305 orchestration. The parallel `net11/` implementation still exposes the same API surface, but it now delegates dual-stack racing to the .NET 11 preview socket layer via `Socket.ConnectAsync` and `ConnectAlgorithm.Parallel`.
+
 ## Running the Sample
+
+.NET 10 sample:
 
 ```bash
 cd samples/HappyEyeballs.Sample
+dotnet run
+```
+
+.NET 11 sample:
+
+```bash
+cd net11/samples/HappyEyeballs.Sample
 dotnet run
 ```
 
@@ -216,23 +250,48 @@ This library is ideal for:
 Build the entire solution:
 
 ```bash
-dotnet build HappyEyeballs.sln
+dotnet build HappyEyeballs.slnx
 ```
 
 Build individual projects:
 
 ```bash
-# Library
+# .NET 10 library
 dotnet build src/HappyEyeballs/HappyEyeballs.csproj
 
-# Sample
+# .NET 10 sample
 dotnet build samples/HappyEyeballs.Sample/HappyEyeballs.Sample.csproj
+
+# .NET 11 library
+dotnet build net11/src/HappyEyeballs/HappyEyeballs.csproj
+
+# .NET 11 sample
+dotnet build net11/samples/HappyEyeballs.Sample/HappyEyeballs.Sample.csproj
+```
+
+## Testing
+
+```bash
+# .NET 10 tests
+dotnet test tests/HappyEyeballs.Tests/HappyEyeballs.Tests.csproj
+
+# .NET 11 tests
+dotnet test net11/tests/HappyEyeballs.Tests/HappyEyeballs.Tests.csproj
 ```
 
 ## Requirements
 
-- .NET 10.0 or later
+- .NET 10.0 SDK for the root projects
+- .NET 11.0 SDK for the parallel `net11/` projects
 - Supports Windows, Linux, and macOS
+
+If .NET 11 isn't installed globally, you can use a locally installed preview SDK to work on the `net11/` projects. For example on Windows:
+
+```powershell
+$dotnet = Join-Path $env:USERPROFILE '.dotnet-11-preview\dotnet.exe'
+& $dotnet build net11/src/HappyEyeballs/HappyEyeballs.csproj
+& $dotnet test net11/tests/HappyEyeballs.Tests/HappyEyeballs.Tests.csproj
+```
 
 ## License
 

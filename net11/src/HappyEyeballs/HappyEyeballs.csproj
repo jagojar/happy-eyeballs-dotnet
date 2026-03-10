@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Title>Happy Eyeballs v2</Title>
+    <Description>Implementation of Happy Eyeballs Version 2 (RFC 8305) for fast dual-stack TCP connections</Description>
+    <Authors>Unisys</Authors>
+    <PackageProjectUrl>https://github.com/unisys/happy-eyeballs</PackageProjectUrl>
+    <PackageTags>happy-eyeballs;rfc8305;ipv6;ipv4;dual-stack;networking</PackageTags>
+  </PropertyGroup>
+
+</Project>
