@@ -4,7 +4,7 @@ A complete implementation of **Happy Eyeballs Version 2** ([RFC 8305](https://to
 
 This repository currently contains two side-by-side implementations:
 
-- `src/`, `samples/`, and `tests/` target .NET 10.
+- `net10/src/`, `net10/samples/`, and `net10/tests/` target .NET 10.
 - `net11/src/`, `net11/samples/`, and `net11/tests/` target .NET 11.
 
 The .NET 11 track keeps the same public API but delegates connection racing to the new socket-layer `Socket.ConnectAsync` Happy Eyeballs support added in the .NET 11 preview.
